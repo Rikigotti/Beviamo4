@@ -1,0 +1,7 @@
+{
+  "name": "Interventi Casette dell'Acqua",
+  "description": "A robust, tablet-optimized application for technical interventions at water kiosks, featuring offline-first capabilities, auto-save, and simplified one-screen workflow.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
