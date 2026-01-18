@@ -2,19 +2,13 @@
 import { Intervention, SyncStatus, InterventionType } from './types';
 import { STORAGE_KEY_CURRENT, STORAGE_KEY_HISTORY, INITIAL_HISTORY_MOCK } from './constants';
 
-// --- CONFIGURAZIONE CLOUD PUBBLICA ---
-// Utilizziamo Pantry.dev, un servizio gratuito per piccoli database JSON.
-// Questo Pantry ID è pubblico per la tua app. I "baskets" saranno le tue Workspace Key.
+// --- CONFIGURAZIONE CLOUD FISSA ---
+// Utilizziamo un ID fisso per il team per eliminare la necessità di inserire chiavi manuali.
 const PANTRY_ID = '72c36691-6674-4b47-9f44-8456f947a164'; 
 const BASE_URL = `https://getpantry.cloud/apiv1/pantry/${PANTRY_ID}/basket`;
+const DEFAULT_WORKSPACE = 'beviamo_main_workspace'; 
 
-const CLOUD_STORAGE_KEY = 'beviamo_cloud_workspace_id';
-
-export const getWorkspaceId = () => localStorage.getItem(CLOUD_STORAGE_KEY) || '';
-export const setWorkspaceId = (id: string) => {
-  const sanitizedId = id.replace(/[^a-zA-Z0-9_-]/g, '_'); // Pantry accetta solo certi caratteri
-  localStorage.setItem(CLOUD_STORAGE_KEY, sanitizedId);
-};
+export const getWorkspaceId = () => DEFAULT_WORKSPACE;
 
 export const createNewIntervention = (): Intervention => ({
   id: crypto.randomUUID(),
@@ -40,13 +34,8 @@ export const loadHistory = (): Intervention[] => {
   return INITIAL_HISTORY_MOCK;
 };
 
-/**
- * SINCRONIZZAZIONE REALE CON IL CLOUD
- * Scarica i dati dal "basket" corrispondente alla Workspace Key e li unisce a quelli locali.
- */
 export const syncWithCloud = async (): Promise<{ success: boolean; added: number }> => {
   const workspaceId = getWorkspaceId();
-  if (!workspaceId) return { success: false, added: 0 };
 
   try {
     const response = await fetch(`${BASE_URL}/${workspaceId}`, {
@@ -56,7 +45,6 @@ export const syncWithCloud = async (): Promise<{ success: boolean; added: number
 
     if (!response.ok) {
       if (response.status === 404) {
-        // Il basket non esiste ancora, lo creiamo inviando i dati locali attuali
         await pushFullHistoryToCloud();
         return { success: true, added: 0 };
       }
@@ -69,7 +57,6 @@ export const syncWithCloud = async (): Promise<{ success: boolean; added: number
     const localHistory = loadHistory();
     const localIds = new Set(localHistory.map(h => h.id));
     
-    // Trova gli interventi nel cloud che non abbiamo localmente
     const newFromCloud = cloudHistory.filter(h => !localIds.has(h.id));
     
     if (newFromCloud.length > 0) {
@@ -77,7 +64,6 @@ export const syncWithCloud = async (): Promise<{ success: boolean; added: number
       localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(merged));
     }
 
-    // Se noi abbiamo dati che il cloud non ha, aggiorniamo il cloud
     const cloudIds = new Set(cloudHistory.map(h => h.id));
     const onlyLocal = localHistory.filter(h => !cloudIds.has(h.id));
     if (onlyLocal.length > 0) {
@@ -91,17 +77,12 @@ export const syncWithCloud = async (): Promise<{ success: boolean; added: number
   }
 };
 
-/**
- * Carica l'intera cronologia locale sul Cloud (sovrascrive il basket)
- */
 export const pushFullHistoryToCloud = async (): Promise<boolean> => {
   const workspaceId = getWorkspaceId();
-  if (!workspaceId) return false;
-
   try {
     const history = loadHistory();
     await fetch(`${BASE_URL}/${workspaceId}`, {
-      method: 'POST', // POST su Pantry crea o aggiorna completamente il basket
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         history,
@@ -116,25 +97,15 @@ export const pushFullHistoryToCloud = async (): Promise<boolean> => {
   }
 };
 
-/**
- * Invia un singolo intervento: prima lo salva localmente, poi aggiorna il cloud
- */
 export const pushToCloud = async (intervention: Intervention): Promise<boolean> => {
-  // 1. Salvataggio Locale (Offline First)
   const history = loadHistory();
   const updated = [intervention, ...history];
   localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(updated));
-
-  // 2. Sincronizzazione Cloud
-  const workspaceId = getWorkspaceId();
-  if (!workspaceId) return true; // Ritorna vero perché localmente è salvato
-
   return await pushFullHistoryToCloud();
 };
 
 export const clearCurrentDraft = () => localStorage.removeItem(STORAGE_KEY_CURRENT);
 
-// Mantengo le altre utility per compatibilità
 export const loadCurrentDraft = (): Intervention => {
   const saved = localStorage.getItem(STORAGE_KEY_CURRENT);
   if (saved) {
