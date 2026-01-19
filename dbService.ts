@@ -3,7 +3,6 @@ import { Intervention, SyncStatus, InterventionType } from './types';
 import { STORAGE_KEY_CURRENT, STORAGE_KEY_HISTORY, INITIAL_HISTORY_MOCK } from './constants';
 
 // --- CONFIGURAZIONE CLOUD FISSA ---
-// Utilizziamo un ID fisso per il team per eliminare la necessità di inserire chiavi manuali.
 const PANTRY_ID = '72c36691-6674-4b47-9f44-8456f947a164'; 
 const BASE_URL = `https://getpantry.cloud/apiv1/pantry/${PANTRY_ID}/basket`;
 const DEFAULT_WORKSPACE = 'beviamo_main_workspace'; 
@@ -59,11 +58,15 @@ export const syncWithCloud = async (): Promise<{ success: boolean; added: number
     
     const newFromCloud = cloudHistory.filter(h => !localIds.has(h.id));
     
+    // Unione dati: preferenza cloud per duplicati, mantenimento locali nuovi
     if (newFromCloud.length > 0) {
       const merged = [...newFromCloud, ...localHistory].sort((a, b) => b.createdAt - a.createdAt);
-      localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(merged));
+      // Rimuovi eventuali duplicati residui per sicurezza
+      const uniqueMerged = Array.from(new Map(merged.map(item => [item.id, item])).values());
+      localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(uniqueMerged));
     }
 
+    // Se abbiamo dati locali che il cloud non ha, forziamo un push di aggiornamento
     const cloudIds = new Set(cloudHistory.map(h => h.id));
     const onlyLocal = localHistory.filter(h => !cloudIds.has(h.id));
     if (onlyLocal.length > 0) {
@@ -98,9 +101,14 @@ export const pushFullHistoryToCloud = async (): Promise<boolean> => {
 };
 
 export const pushToCloud = async (intervention: Intervention): Promise<boolean> => {
+  // Prima di inviare, proviamo a sincronizzare per non perdere dati altrui
+  await syncWithCloud();
+  
   const history = loadHistory();
   const updated = [intervention, ...history];
-  localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(updated));
+  const uniqueUpdated = Array.from(new Map(updated.map(item => [item.id, item])).values());
+  
+  localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(uniqueUpdated));
   return await pushFullHistoryToCloud();
 };
 
@@ -122,9 +130,10 @@ export const saveCurrentDraft = (intervention: Intervention) => {
   localStorage.setItem(STORAGE_KEY_CURRENT, JSON.stringify(intervention));
 };
 
+// Fix: Explicitly use window.Blob to ensure the native constructor is utilized
 export const exportDatabase = () => {
   const data = { history: loadHistory(), exportDate: Date.now() };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const blob = new window.Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   return URL.createObjectURL(blob);
 };
 

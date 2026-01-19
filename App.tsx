@@ -51,6 +51,22 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // --- Cloud Handlers ---
+  const handleCloudSync = useCallback(async (silent = false) => {
+    if (!navigator.onLine) return;
+    if (!silent) setIsSyncing(true);
+    const result = await syncWithCloud();
+    if (!silent) setIsSyncing(false);
+    
+    if (result.success) {
+      setHistory(loadHistory());
+      setLastSyncTime(Date.now());
+      if (result.added > 0 && !silent) {
+        setToast({ message: `Aggiornato! ${result.added} nuovi interventi dal cloud.`, type: 'success' });
+      }
+    }
+  }, []);
+
   // --- Effects ---
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -58,15 +74,18 @@ const App: React.FC = () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     
-    if (isAuthenticated && navigator.onLine) {
+    if (isAuthenticated) {
       handleCloudSync();
+      // POLLING: Controlla nuovi dati ogni 60 secondi
+      const interval = setInterval(() => handleCloudSync(true), 60000);
+      return () => clearInterval(interval);
     }
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, handleCloudSync]);
 
   useEffect(() => {
     if (isAuthenticated) saveCurrentDraft(intervention);
@@ -78,20 +97,6 @@ const App: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [toast]);
-
-  // --- Cloud Handlers ---
-  const handleCloudSync = async () => {
-    setIsSyncing(true);
-    const result = await syncWithCloud();
-    setIsSyncing(false);
-    if (result.success) {
-      setHistory(loadHistory());
-      setLastSyncTime(Date.now());
-      if (result.added > 0) {
-        setToast({ message: `Aggiornato! ${result.added} nuovi interventi dal cloud.`, type: 'success' });
-      }
-    }
-  };
 
   // --- Data Handlers ---
   const updateIntervention = useCallback((updates: Partial<Intervention>) => {
@@ -114,10 +119,11 @@ const App: React.FC = () => {
     setShowSearchDropdown(false);
   };
 
+  // Fix: Explicitly type 'file' as 'File' to ensure it's recognized as a native 'Blob'
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    Array.from(files).forEach(file => {
+    Array.from(files).forEach((file: File) => {
       const reader = new FileReader();
       reader.onloadend = () => {
         const newPhoto: PhotoData = { id: crypto.randomUUID(), dataUrl: reader.result as string, timestamp: Date.now() };
@@ -208,19 +214,25 @@ const App: React.FC = () => {
         <div className="max-w-5xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 beviamo-gradient rounded-full flex items-center justify-center shadow-lg">
-              <svg className="w-6 h-6 text-white fill-current" viewBox="0 0 24 24"><path d="M12 21.5c-4.4 0-8-3.6-8-8 0-4.1 4.3-9.5 7.1-12.2.5-.5 1.3-.5 1.8 0 2.8 2.7 7.1 8.1 7.1 12.2 0 4.4-3.6 8-8 8z"/></svg>
+              <svg className={`w-6 h-6 text-white fill-current ${isSyncing ? 'animate-pulse' : ''}`} viewBox="0 0 24 24"><path d="M12 21.5c-4.4 0-8-3.6-8-8 0-4.1 4.3-9.5 7.1-12.2.5-.5 1.3-.5 1.8 0 2.8 2.7 7.1 8.1 7.1 12.2 0 4.4-3.6 8-8 8z"/></svg>
             </div>
             <div>
               <h1 className="text-lg font-bold text-beviamo-dark leading-none">BEVIAMO<span className="text-beviamo-primary">.NET</span></h1>
-              <p className="text-[9px] font-bold text-beviamo-primary/60 uppercase tracking-widest mt-1">Connesso al Cloud</p>
+              <p className="text-[9px] font-bold text-beviamo-primary/60 uppercase tracking-widest mt-1">
+                {isSyncing ? 'Sincronizzazione...' : `Cloud OK • ${lastSyncString}`}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
              <button 
-                onClick={() => { setHistoryTab('global'); setShowHistoryPanel(true); }} 
+                onClick={() => { 
+                  handleCloudSync(); // Forza sync all'apertura
+                  setHistoryTab('global'); 
+                  setShowHistoryPanel(true); 
+                }} 
                 className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-beviamo-dark text-white font-bold text-[10px] uppercase tracking-widest shadow-lg hover:scale-105 transition-all"
              >
-                <RefreshIcon size={14} /> <span>Storico Team</span>
+                <RefreshIcon size={14} className={isSyncing ? 'animate-spin' : ''} /> <span>Storico Team</span>
                 <span className="bg-beviamo-accent text-beviamo-dark px-1.5 py-0.5 rounded-md text-[9px]">{history.length}</span>
              </button>
           </div>
@@ -267,7 +279,11 @@ const App: React.FC = () => {
                <div className="flex justify-between items-center mb-4">
                   <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">Ultimi interventi sede</h3>
                   <button 
-                    onClick={() => { setHistoryTab('specific'); setShowHistoryPanel(true); }} 
+                    onClick={() => { 
+                      handleCloudSync(); // Forza sync all'apertura specifica
+                      setHistoryTab('specific'); 
+                      setShowHistoryPanel(true); 
+                    }} 
                     className="text-beviamo-primary font-black text-[10px] uppercase tracking-widest hover:underline"
                   >
                     Vedi Tutto →
@@ -411,9 +427,12 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[500] flex justify-end">
           <div className="absolute inset-0 bg-beviamo-dark/60 backdrop-blur-sm" onClick={() => setShowHistoryPanel(false)} />
           <aside className="relative w-full max-w-xl bg-white h-full shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col">
-            <div className="beviamo-gradient px-10 py-10 text-white shadow-xl">
-              <h2 className="text-3xl font-black uppercase tracking-tighter">Archivio Interventi</h2>
-              <p className="text-white/70 text-[11px] font-bold uppercase tracking-[0.4em] mt-1">Dati Globali Team</p>
+            <div className="beviamo-gradient px-10 py-10 text-white shadow-xl flex justify-between items-center">
+              <div>
+                <h2 className="text-3xl font-black uppercase tracking-tighter">Archivio Interventi</h2>
+                <p className="text-white/70 text-[11px] font-bold uppercase tracking-[0.4em] mt-1">Dati Globali Team</p>
+              </div>
+              {isSyncing && <RefreshIcon size={24} className="animate-spin text-white/50" />}
             </div>
 
             <div className="bg-slate-50 border-b border-slate-200 p-6">
@@ -440,9 +459,14 @@ const App: React.FC = () => {
                    <h3 className="text-[11px] font-black text-beviamo-dark uppercase tracking-[0.3em]">
                       {historyTab === 'global' ? 'Attività Recente' : `Cronologia sede`}
                    </h3>
-                   <span className="text-[9px] font-black text-beviamo-primary uppercase bg-beviamo-light px-3 py-1.5 rounded-xl">
-                      {historyTab === 'global' ? history.length : specificHistory.length} Record
-                   </span>
+                   <div className="flex items-center gap-2">
+                     <button onClick={() => handleCloudSync()} className="p-2 text-beviamo-primary hover:bg-beviamo-light rounded-lg transition-colors">
+                        <RefreshIcon size={16} className={isSyncing ? 'animate-spin' : ''} />
+                     </button>
+                     <span className="text-[9px] font-black text-beviamo-primary uppercase bg-beviamo-light px-3 py-1.5 rounded-xl">
+                        {historyTab === 'global' ? history.length : specificHistory.length} Record
+                     </span>
+                   </div>
                 </div>
 
                 <div className="space-y-4">
@@ -491,7 +515,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="p-8 bg-beviamo-light/20 rounded-[2rem] mb-10 border border-beviamo-primary/5">
-              <span className="block text-[9px] font-black text-beviamo-primary uppercase mb-4">Dettagli Tecnici</span>
+              <span className="block text-[9px] font-black text-beviamo-primary uppercase tracking-widest mb-4">Dettagli Tecnici</span>
               <p className="text-xl font-bold text-slate-700 italic leading-relaxed">"{selectedHistoryItem.note || 'Dettaglio non inserito'}"</p>
             </div>
 
